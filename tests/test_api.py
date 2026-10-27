@@ -187,3 +187,38 @@ def test_delete_dataset(client, dataset_id):
 def test_security_headers(client):
     response = client.get("/api/health")
     assert response.headers["X-Content-Type-Options"] == "nosniff"
+
+
+def test_upload_ids_are_content_addressed_and_keep_models(client, classification_df):
+    first = upload(client, classification_df, "churn.csv").get_json()["dataset"]["id"]
+    client.post(f"/api/datasets/{first}/train", json={"target": "churn", "models": ["linear"], "cv_folds": 3})
+    again = upload(client, classification_df, "churn.csv").get_json()["dataset"]
+    assert again["id"] == first
+    assert again["has_model"] is True
+    other = upload(client, classification_df.head(100), "churn.csv").get_json()["dataset"]["id"]
+    assert other != first
+
+
+def test_sample_datasets_rebuild_on_a_fresh_instance(classification_df):
+    """Simulates a serverless request reaching an instance that never loaded the sample."""
+    from datalens.api import create_app
+
+    loaded = create_app(DatasetStore(capacity=2)).test_client().post("/api/samples/customer_churn").get_json()
+    dataset_id = loaded["dataset"]["id"]
+    assert dataset_id == "sample-customer_churn"
+
+    fresh = create_app(DatasetStore(capacity=2)).test_client()
+    body = fresh.get(f"/api/datasets/{dataset_id}").get_json()
+    assert body["dataset"]["rows"] == loaded["dataset"]["rows"]
+    assert fresh.get("/api/datasets/sample-unknown").status_code == 404
+    assert fresh.get("/api/datasets/abc123").status_code == 404
+
+
+def test_vercel_entry_point_exposes_wsgi_app():
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location("vercel_index", Path(__file__).parent.parent / "api" / "index.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.app.test_client().get("/api/health").status_code == 200

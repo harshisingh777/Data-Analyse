@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import time
@@ -40,11 +41,31 @@ def _safe_filename(name: str, suffix: str) -> str:
     return f"{stem}{suffix}"
 
 
+SAMPLE_PREFIX = "sample-"
+
+
+def _upload_id(data: bytes, filename: str) -> str:
+    """Content-addressed id: re-uploading the same file on any instance yields the same dataset id."""
+    return hashlib.sha256(filename.encode() + b"\0" + data).hexdigest()[:16]
+
+
+def _rebuild_sample(dataset_id: str):
+    if not dataset_id.startswith(SAMPLE_PREFIX):
+        return None
+    try:
+        name, df = load_sample(dataset_id[len(SAMPLE_PREFIX) :])
+    except DataLensError:
+        return None
+    return name, df, "sample"
+
+
 def create_app(store: DatasetStore | None = None) -> Flask:
     app = Flask(__name__, static_folder=None)
     app.config["MAX_CONTENT_LENGTH"] = Settings.MAX_UPLOAD_MB * 1024 * 1024
     app.config["JSON_SORT_KEYS"] = False
     datasets = store or DatasetStore()
+    if datasets.fallback is None:
+        datasets.fallback = _rebuild_sample
     app.extensions["datalens_store"] = datasets
 
     # ------------------------------------------------------------------ errors
@@ -128,15 +149,16 @@ def create_app(store: DatasetStore | None = None) -> Flask:
         if file is None or not file.filename:
             raise DataLensError("No file was uploaded. Attach a file in the 'file' field.")
         start = time.perf_counter()
-        df = load_dataframe(file.read(), file.filename)
-        session = datasets.add(file.filename, df, source="upload")
+        data = file.read()
+        df = load_dataframe(data, file.filename)
+        session = datasets.add(file.filename, df, source="upload", dataset_id=_upload_id(data, file.filename))
         log.info("Loaded %s (%d×%d) in %.2fs", file.filename, *df.shape, time.perf_counter() - start)
         return _json(_dataset_payload(session), 201)
 
     @app.post("/api/samples/<key>")
     def load_sample_dataset(key: str):
         name, df = load_sample(key)
-        session = datasets.add(name, df, source="sample")
+        session = datasets.add(name, df, source="sample", dataset_id=f"{SAMPLE_PREFIX}{key}")
         return _json(_dataset_payload(session), 201)
 
     @app.get("/api/datasets/<dataset_id>")

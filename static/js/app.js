@@ -38,6 +38,8 @@ const state = {
   stats: null,
   model: null,
   sqlResult: null,
+  lastFile: null, // { id, file } for transparent re-upload
+  lastTrainOptions: null,
 };
 
 // ------------------------------------------------------------------ utilities
@@ -115,6 +117,46 @@ function columnsOfType(...types) {
   return state.profile.columns.filter((c) => set.has(c.semantic_type));
 }
 
+// ------------------------------------------------------------------ serverless recovery
+// On serverless hosts a request can reach an instance that has never seen this dataset or model.
+// Samples are rebuilt by the server; uploads are re-sent and models retrained with the same options.
+
+async function recover(err) {
+  if (/Dataset not found/.test(err.message) && state.lastFile?.id === state.id) {
+    await api.upload(state.lastFile.file);
+    return true;
+  }
+  if (/No model has been trained|Train a model before/.test(err.message) && state.lastTrainOptions) {
+    await api.train(state.id, state.lastTrainOptions);
+    return true;
+  }
+  return false;
+}
+
+async function withRecovery(call, attempts = 2) {
+  try {
+    return await call();
+  } catch (err) {
+    if (attempts > 0 && (await recover(err))) return withRecovery(call, attempts - 1);
+    throw err;
+  }
+}
+
+async function ensureServerState() {
+  const payload = await withRecovery(() => api.dataset(state.id));
+  if (state.lastTrainOptions && !payload.dataset.has_model) await api.train(state.id, state.lastTrainOptions);
+}
+
+function optionsFromSummary(summary) {
+  return {
+    target: summary.target,
+    task: summary.task,
+    models: summary.leaderboard.filter((r) => !r.baseline).map((r) => r.key),
+    cv_folds: summary.cv_folds,
+    tune: Boolean(summary.tuning),
+  };
+}
+
 // ------------------------------------------------------------------ routing
 
 function setHash(tab) {
@@ -123,7 +165,7 @@ function setHash(tab) {
 }
 
 async function route() {
-  const match = location.hash.match(/^#\/d\/([a-f0-9]+)(?:\/(\w+))?/);
+  const match = location.hash.match(/^#\/d\/([\w-]+)(?:\/(\w+))?/);
   if (!match) return showHome();
   if (match[1] === state.id) return setTab(match[2] || "overview");
   try {
@@ -191,7 +233,10 @@ function handleFile(file) {
     toast(`File is larger than the ${limit} MB limit.`, { error: true });
     return;
   }
-  ingest(api.upload(file), `Profiling ${file.name}…`);
+  ingest(api.upload(file).then((payload) => {
+    state.lastFile = { id: payload.dataset.id, file };
+    return payload;
+  }), `Profiling ${file.name}…`);
 }
 
 // ------------------------------------------------------------------ workspace
@@ -210,6 +255,7 @@ function openWorkspace(payload, tab) {
     stats: null,
     model: null,
     sqlResult: null,
+    lastTrainOptions: null,
   });
   const d = payload.dataset;
   $("#view-home").hidden = true;
@@ -302,7 +348,7 @@ async function loadPreview() {
   const p = state.preview;
   const target = $("#preview-table");
   try {
-    const data = await api.rows(state.id, p);
+    const data = await withRecovery(() => api.rows(state.id, p));
     const types = Object.fromEntries(state.profile.columns.map((c) => [c.name, c.semantic_type]));
     const head = data.columns.map((c) => {
       const arrow = p.sort === c ? (p.order === "asc" ? " ↑" : " ↓") : "";
@@ -443,7 +489,8 @@ async function runStatistics() {
   setBusy(button, true, "Running…");
   $("#stats-output").innerHTML = `<div class="card loading-panel"><div class="spinner lg"></div><span class="muted">Running hypothesis tests…</span></div>`;
   try {
-    state.stats = await api.statistics(state.id, { target, alpha: $("#stats-alpha").value });
+    const alpha = $("#stats-alpha").value;
+    state.stats = await withRecovery(() => api.statistics(state.id, { target, alpha }));
     renderStatistics();
   } catch (err) {
     $("#stats-output").innerHTML = `<div class="error-box">${esc(err.message)}</div>`;
@@ -511,7 +558,8 @@ const TRAIN_STEPS = [
 async function restoreModel() {
   if (!state.dataset.has_model || state.model) return;
   try {
-    state.model = await api.modelSummary(state.id);
+    state.model = await withRecovery(() => api.modelSummary(state.id));
+    state.lastTrainOptions = optionsFromSummary(state.model);
     $("#model-target").value = state.model.target;
     renderModel();
   } catch {
@@ -548,7 +596,8 @@ async function runModel() {
 
   setBusy(button, true, "Training…");
   try {
-    state.model = await api.train(state.id, options);
+    state.lastTrainOptions = options;
+    state.model = await withRecovery(() => api.train(state.id, options));
     renderModel();
   } catch (err) {
     $("#model-output").innerHTML = `<div class="error-box">${esc(err.message)}</div>`;
@@ -619,7 +668,7 @@ function renderModel() {
         <form id="predict-form" class="predict-form">${predictFields(m.input_schema)}</form>
         <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
           <button class="btn btn-primary" id="predict-run" type="button">Predict</button>
-          <a class="btn btn-ghost" href="${api.modelUrl(state.id)}">Download model (.joblib)</a>
+          <a class="btn btn-ghost" data-ensure href="${api.modelUrl(state.id)}">Download model (.joblib)</a>
         </div>
         <div id="predict-result"></div>
       </div>
@@ -707,7 +756,7 @@ async function runPrediction() {
   const record = Object.fromEntries(new FormData($("#predict-form")));
   setBusy(button, true, "Scoring…");
   try {
-    const { predictions } = await api.predict(state.id, record);
+    const { predictions } = await withRecovery(() => api.predict(state.id, record));
     const p = predictions[0];
     const value = typeof p.prediction === "number" ? formatNumber(p.prediction, { digits: 5 }) : p.prediction;
     let probs = "";
@@ -729,7 +778,7 @@ async function runPrediction() {
 
 async function initSql() {
   try {
-    const schema = await api.sqlSchema(state.id);
+    const schema = await withRecovery(() => api.sqlSchema(state.id));
     $("#sql-table").textContent = schema.table;
     $("#sql-columns").innerHTML = schema.columns.map((c) => `<li data-insert="${esc(c.name)}" title="Insert into query"><code>${esc(c.name)}</code><span>${esc(c.type)}</span></li>`).join("");
     $("#sql-examples").innerHTML = schema.examples.map((e, i) => `<button data-example="${i}">${esc(e.title)}</button>`).join("");
@@ -747,7 +796,8 @@ async function runSql() {
   const button = $("#sql-run");
   setBusy(button, true, "Running…");
   try {
-    const result = await api.sql(state.id, $("#sql-editor").value);
+    const query = $("#sql-editor").value;
+    const result = await withRecovery(() => api.sql(state.id, query));
     state.sqlResult = result;
     $("#sql-meta").textContent = `${pluralize(result.row_count, "row")}${result.truncated ? " (truncated)" : ""} · ${result.elapsed_ms} ms`;
     const numeric = result.columns.map((_, i) => i).filter((i) => result.rows.some((r) => typeof r[i] === "number"));
@@ -773,7 +823,12 @@ function insertAtCursor(textarea, text) {
 
 // ------------------------------------------------------------------ report
 
-function renderReport() {
+async function renderReport() {
+  try {
+    await ensureServerState();
+  } catch (err) {
+    toast(err.message, { error: true });
+  }
   $("#report-frame").src = `${api.reportUrl(state.id)}?t=${Date.now()}`;
 }
 
@@ -781,6 +836,18 @@ function renderReport() {
 
 function bindEvents() {
   window.addEventListener("hashchange", route);
+  // Downloads are plain links; make sure this instance has the dataset (and model) before following them.
+  document.addEventListener("click", async (event) => {
+    const link = event.target.closest("a[data-ensure]");
+    if (!link) return;
+    event.preventDefault();
+    try {
+      await ensureServerState();
+      window.location.href = link.href;
+    } catch (err) {
+      toast(err.message, { error: true });
+    }
+  });
   document.addEventListener("click", (event) => {
     const target = event.target.closest("[data-action], [data-tab], [data-tab-link], [data-sample], [data-column], [data-sort], [data-page], [data-method], [data-example], [data-insert]");
     if (!target) return;

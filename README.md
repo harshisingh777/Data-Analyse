@@ -1,5 +1,7 @@
 # DataLens: Analytics & AutoML Workbench
 
+**Live demo:** https://data-analyse-five.vercel.app/
+
 DataLens is a web workbench for tabular data. Upload a CSV, Excel, JSON or Parquet file and it will:
 
 1. **Profile** the data: semantic column types, distributions, outliers, missingness, correlations and a weighted data-quality score.
@@ -71,6 +73,16 @@ python -m datalens profile data/samples/house_prices.csv --json profile.json
 python -m datalens train data/samples/customer_churn.csv --tune --report churn_report.html --model churn.joblib
 ```
 
+### Deploying to Vercel
+
+The repo deploys to Vercel as-is: `api/index.py` exposes the Flask app as a Python serverless function, and `vercel.json` routes every path to it. Serverless instances don't share memory, so:
+
+- dataset ids are deterministic (`sample-<name>` for samples, a content hash for uploads);
+- an instance that receives an unknown sample id rebuilds the sample from disk;
+- the browser keeps the uploaded file and the last training options, and transparently re-uploads or retrains if a request lands on a fresh instance.
+
+Parquet support needs `pyarrow`, which is left out of `requirements.txt` to stay within the function size limit (`pip install pyarrow` locally).
+
 ### Docker
 
 ```bash
@@ -141,7 +153,7 @@ Environment variables (defaults in `datalens/config.py`):
 
 ## Limitations
 
-- Datasets live in server memory, so the app runs as a single process and data is lost on restart.
+- Datasets live in server memory. Self-hosted, run a single process; on Vercel, the recovery logic above rebuilds state on new instances.
 - Training is synchronous; very wide or very large datasets are sampled to keep response times reasonable.
 - Statistical tests describe association, not causation.
 
