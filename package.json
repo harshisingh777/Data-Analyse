@@ -1,0 +1,14 @@
+{
+  "name": "datalens-frontend",
+  "private": true,
+  "author": "Harshi Singh",
+  "license": "MIT",
+  "type": "module",
+  "description": "Front-end unit tests for DataLens (no build step; the browser loads static/js directly).",
+  "scripts": {
+    "test": "node --test \"tests/js/*.test.mjs\""
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

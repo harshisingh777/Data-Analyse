@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DataLens · Analytics Workbench</title>
+  <meta name="author" content="Harshi Singh">
+  <meta name="description" content="Profile, test and model tabular data: data quality, statistics, AutoML and SQL in one workbench.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23D97757'/%3E%3Cpath d='M9 22V10h5.5a6 6 0 0 1 0 12z' fill='none' stroke='white' stroke-width='2.4'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/app.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script type="module" src="/static/js/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" data-action="home" aria-label="DataLens home">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">DataLens</span>
+    </a>
+    <div class="topbar-context" id="topbar-context" hidden>
+      <span class="divider" aria-hidden="true">/</span>
+      <span id="topbar-dataset" class="topbar-dataset"></span>
+    </div>
+    <div class="topbar-actions">
+      <span class="version" id="app-version"></span>
+      <button class="btn btn-ghost btn-sm" data-action="home" id="new-dataset-btn" hidden>New dataset</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- ============================== HOME ============================== -->
+    <section id="view-home" class="view">
+      <div class="hero">
+        <p class="eyebrow">Analytics workbench</p>
+        <h1>Understand a dataset in minutes, not days.</h1>
+        <p class="lead">Upload a table to get a full data-quality audit, statistical tests, an AutoML model
+          comparison and a sandboxed SQL editor, then export a report you can share.</p>
+      </div>
+
+      <div class="home-grid">
+        <div class="card upload-card">
+          <div class="card-header">
+            <h2 class="card-title">Upload a dataset</h2>
+            <span class="muted small" id="upload-limits">CSV, TSV, Excel, JSON or Parquet</span>
+          </div>
+          <label class="dropzone" id="dropzone" tabindex="0">
+            <input type="file" id="file-input" accept=".csv,.tsv,.txt,.xlsx,.xls,.json,.parquet" hidden>
+            <svg class="dropzone-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0L7 9m5-5 5 5M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span class="dropzone-title">Drop a file here or <u>browse</u></span>
+            <span class="dropzone-sub muted small" id="dropzone-sub">Files are analysed in memory and never written to disk.</span>
+          </label>
+          <div class="upload-progress" id="upload-progress" hidden>
+            <div class="spinner" aria-hidden="true"></div>
+            <span id="upload-status">Profiling dataset…</span>
+          </div>
+        </div>
+
+        <div class="card samples-card">
+          <div class="card-header">
+            <h2 class="card-title">Or start with a sample</h2>
+          </div>
+          <div id="samples" class="samples"></div>
+        </div>
+      </div>
+
+      <div class="capabilities">
+        <div class="capability"><span class="cap-num">01</span><h3>Profile</h3><p>Semantic types, distributions, outliers, missingness and a weighted data-quality score.</p></div>
+        <div class="capability"><span class="cap-num">02</span><h3>Test</h3><p>ANOVA, chi-square and correlation tests with effect sizes and FDR-corrected p-values.</p></div>
+        <div class="capability"><span class="cap-num">03</span><h3>Model</h3><p>Five algorithms compared with cross-validation, optional tuning and permutation importance.</p></div>
+        <div class="capability"><span class="cap-num">04</span><h3>Query</h3><p>Read-only SQL with window functions, CTEs and CSV export of any result.</p></div>
+        <div class="capability"><span class="cap-num">05</span><h3>Report</h3><p>A print-ready HTML report with an executive summary and every key table.</p></div>
+      </div>
+    </section>
+
+    <!-- ============================== WORKSPACE ============================== -->
+    <section id="view-workspace" class="view" hidden>
+      <div class="ws-header">
+        <div>
+          <p class="eyebrow" id="ws-source"></p>
+          <h1 id="ws-title"></h1>
+          <p class="muted" id="ws-meta"></p>
+        </div>
+        <div class="ws-actions">
+          <a class="btn btn-ghost" id="export-csv" href="#" download>Export clean CSV</a>
+          <button class="btn btn-primary" data-tab-link="report">View report</button>
+        </div>
+      </div>
+
+      <nav class="tabs" role="tablist" aria-label="Workspace sections">
+        <button role="tab" class="tab" data-tab="overview" aria-selected="true">Overview</button>
+        <button role="tab" class="tab" data-tab="columns">Columns</button>
+        <button role="tab" class="tab" data-tab="correlations">Correlations</button>
+        <button role="tab" class="tab" data-tab="statistics">Statistics</button>
+        <button role="tab" class="tab" data-tab="model">Model</button>
+        <button role="tab" class="tab" data-tab="sql">SQL</button>
+        <button role="tab" class="tab" data-tab="report">Report</button>
+      </nav>
+
+      <!-- Overview -->
+      <div class="panel" data-panel="overview">
+        <div class="kpis" id="overview-kpis"></div>
+        <div class="summary-block" id="overview-summary"></div>
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-header"><h2 class="card-title">Data quality</h2><span class="muted small">Weighted score, 0–100</span></div>
+            <div id="quality-breakdown"></div>
+          </div>
+          <div class="card">
+            <div class="card-header"><h2 class="card-title">Key findings</h2></div>
+            <div id="overview-insights" class="findings"></div>
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-header"><h2 class="card-title">Alerts</h2><span class="muted small" id="alert-count"></span></div>
+            <div id="overview-alerts" class="alerts"></div>
+          </div>
+          <div class="card">
+            <div class="card-header"><h2 class="card-title">Missing values by column</h2></div>
+            <div class="chart-box"><canvas id="chart-missing"></canvas></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">Data preview</h2>
+            <div class="pager" id="preview-pager"></div>
+          </div>
+          <div class="table-wrap" id="preview-table"></div>
+        </div>
+      </div>
+
+      <!-- Columns -->
+      <div class="panel" data-panel="columns" hidden>
+        <div class="columns-layout">
+          <aside class="card column-list-card">
+            <input type="search" class="input" id="column-search" placeholder="Filter columns" aria-label="Filter columns">
+            <ul class="column-list" id="column-list"></ul>
+          </aside>
+          <div class="card column-detail" id="column-detail"></div>
+        </div>
+      </div>
+
+      <!-- Correlations -->
+      <div class="panel" data-panel="correlations" hidden>
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">Correlation matrix</h2>
+            <div class="segmented" id="corr-method">
+              <button class="active" data-method="pearson">Pearson</button>
+              <button data-method="spearman">Spearman</button>
+            </div>
+          </div>
+          <div id="heatmap" class="heatmap-wrap"></div>
+          <div class="legend-scale"><span>−1</span><div class="scale-bar"></div><span>+1</span></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h2 class="card-title">Strongest pairs</h2></div>
+          <div class="table-wrap" id="corr-pairs"></div>
+        </div>
+      </div>
+
+      <!-- Statistics -->
+      <div class="panel" data-panel="statistics" hidden>
+        <div class="card toolbar-card">
+          <div class="field-row">
+            <label class="field">
+              <span class="field-label">Target column</span>
+              <select class="input" id="stats-target"></select>
+            </label>
+            <label class="field">
+              <span class="field-label">Significance level (α)</span>
+              <select class="input" id="stats-alpha">
+                <option value="0.01">0.01</option>
+                <option value="0.05" selected>0.05</option>
+                <option value="0.10">0.10</option>
+              </select>
+            </label>
+            <button class="btn btn-primary" id="stats-run">Run tests</button>
+          </div>
+        </div>
+        <div id="stats-output"><div class="empty">Choose a target and run the tests to see which features are associated with it.</div></div>
+      </div>
+
+      <!-- Model -->
+      <div class="panel" data-panel="model" hidden>
+        <div class="card toolbar-card">
+          <div class="field-row">
+            <label class="field">
+              <span class="field-label">Target column</span>
+              <select class="input" id="model-target"></select>
+            </label>
+            <label class="field">
+              <span class="field-label">Task</span>
+              <select class="input" id="model-task">
+                <option value="">Auto-detect</option>
+                <option value="classification">Classification</option>
+                <option value="regression">Regression</option>
+              </select>
+            </label>
+            <label class="field field-sm">
+              <span class="field-label">Hold-out</span>
+              <select class="input" id="model-test-size">
+                <option value="0.2" selected>20%</option>
+                <option value="0.25">25%</option>
+                <option value="0.3">30%</option>
+              </select>
+            </label>
+            <label class="field field-sm">
+              <span class="field-label">CV folds</span>
+              <select class="input" id="model-folds">
+                <option>3</option><option selected>5</option><option>10</option>
+              </select>
+            </label>
+          </div>
+          <div class="field-row">
+            <fieldset class="field model-choices">
+              <legend class="field-label">Algorithms</legend>
+              <div id="model-choices" class="checks"></div>
+            </fieldset>
+            <label class="check tune-check"><input type="checkbox" id="model-tune"> Tune the best model (randomised search)</label>
+            <button class="btn btn-primary" id="model-run">Train models</button>
+          </div>
+        </div>
+        <div id="model-output"><div class="empty">Configure the run above. Every model is cross-validated and compared against a naive baseline.</div></div>
+      </div>
+
+      <!-- SQL -->
+      <div class="panel" data-panel="sql" hidden>
+        <div class="sql-layout">
+          <aside class="card sql-schema">
+            <h2 class="card-title">Schema</h2>
+            <p class="muted small">Table <code id="sql-table">dataset</code></p>
+            <ul id="sql-columns" class="schema-list"></ul>
+            <h2 class="card-title" style="margin-top:20px">Examples</h2>
+            <div id="sql-examples" class="sql-examples"></div>
+          </aside>
+          <div class="sql-main">
+            <div class="card sql-editor-card">
+              <textarea id="sql-editor" class="sql-editor" spellcheck="false" aria-label="SQL query"></textarea>
+              <div class="sql-toolbar">
+                <span class="muted small">Read-only · SQLite dialect · <kbd>Ctrl</kbd> + <kbd>Enter</kbd> to run</span>
+                <div class="sql-toolbar-actions">
+                  <button class="btn btn-ghost btn-sm" id="sql-download" disabled>Download CSV</button>
+                  <button class="btn btn-primary btn-sm" id="sql-run">Run query</button>
+                </div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-header"><h2 class="card-title">Result</h2><span class="muted small" id="sql-meta"></span></div>
+              <div class="table-wrap" id="sql-result"><div class="empty">Run a query to see results.</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Report -->
+      <div class="panel" data-panel="report" hidden>
+        <div class="card toolbar-card report-toolbar">
+          <div>
+            <h2 class="card-title">Analysis report</h2>
+            <p class="muted small">Includes the statistics and model sections once you have run them.</p>
+          </div>
+          <div class="ws-actions">
+            <button class="btn btn-ghost" id="report-refresh">Refresh</button>
+            <button class="btn btn-ghost" id="report-print">Print / PDF</button>
+            <a class="btn btn-primary" id="report-download" href="#">Download HTML</a>
+          </div>
+        </div>
+        <iframe id="report-frame" class="report-frame" title="Analysis report preview"></iframe>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <span>Made by <strong>Harshi Singh</strong></span>
+    <span class="footer-sep" aria-hidden="true">·</span>
+    <span>DataLens · MIT License</span>
+  </footer>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>
